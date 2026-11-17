@@ -10,7 +10,7 @@
   const RULES = {
     marble: ['지금 판 그대로 — 주사위를 굴려 칸에 멈추고, 같은 포탑끼리 끌어 합쳐요.', '<b>작전 카드(로그라이크)는 뺐어요.</b> 판 시작 · 보스 처치 때 카드 창이 없어요.', '몬스터가 6시 굴에서 <b>양쪽 길</b>로 나와 12시 <b>수정</b>으로 가요. 닿은 만큼 수정이 깎이고(보스 −8), 0이 되면 끝.', '보스 1마리 = 왼쪽 길 · 15 · 20라운드는 <b>2마리가 양쪽</b>에서.'],
     dial: ['주사위 · 말이 없어요. <b>[소환]</b>을 누르면 빈 자리에 포탑이 생겨요.', '<b>판을 손가락으로 돌리면</b> 포탑 고리가 통째로 돌아요. 아래 ⟲ ⟳ 단추도 돼요(꾹 = 계속).', '굴 앞 <b>화살표</b> = 이번 웨이브가 많이 오는 쪽. 그쪽에 센 포탑을 돌려 대세요.', '같은 포탑 + 같은 단계는 끌어서 합치기. 몬스터가 12시 <b>수정</b>에 닿으면 수정이 깎여요.'],
-    slide: ['<b>[소환]</b>을 누르면 빈 칸에 1단계 포탑이 생겨요. 값은 부를 때마다 조금씩 올라요.', '<b>판을 쓸어 밀면</b> 모든 포탑이 그쪽 끝까지 미끄러지고, <b>같은 단계끼리 부딪히면 합쳐져요</b>(앞에 있던 포탑 종류가 남음 — 2048처럼). 아래 방향 단추도 돼요.', '<b>밝은 가장자리 칸</b>이 길에 가까워요. 가운데는 사거리가 잘 안 닿아요.', '굴 앞 화살표 = 많이 오는 쪽. 몬스터가 12시 <b>수정</b>에 닿으면 수정이 깎여요.'],
+    slide: ['<b>[소환]</b>을 누르면 빈 칸에 1단계 포탑이 생겨요. 값은 부를 때마다 조금씩 올라요.', '<b>판을 쓸어 밀면</b>(판 아래 소환 단추 위쪽까지 돼요) 모든 포탑이 그쪽 끝까지 미끄러지고, <b>같은 단계끼리 부딪히면 합쳐져요</b>(앞에 있던 포탑 종류가 남음 — 2048처럼). 아래 방향 단추도 돼요.', '<b>밝은 가장자리 칸</b>이 길에 가까워요. 가운데는 사거리가 잘 안 닿아요.', '굴 앞 화살표 = 많이 오는 쪽. 몬스터가 12시 <b>수정</b>에 닿으면 수정이 깎여요.'],
   };
   const ICON = { marble: '🎲', dial: '⟳', slide: '⇲' };
 
@@ -177,6 +177,8 @@
     U.move = function (e) {
       const s = this.swipe; if (!s || s.done) return;
       const [x, y] = this.pt(e);
+      // 소환 단추에서 시작: 손가락이 조금이라도(화면 10px) 움직이면 '탭'이 아니라 밀기 → 소환하지 않음
+      if (s.roll && !s.moved && Math.hypot(e.clientX - s.cx, e.clientY - s.cy) > TAP_PX) { s.moved = true; document.getElementById('rollBtn').classList.remove('press'); }
       if (Math.hypot(x - s.x, y - s.y) > 46) { s.done = true; this.labSlide(dirOf(s.x, s.y, x, y)); }
     };
     U.up = function (e) {
@@ -190,9 +192,31 @@
       if (this.app.cmd('slide', [dir])) { if (root.HAPTIC) root.HAPTIC.play('select'); }
       else { if (root.HAPTIC) root.HAPTIC.play('deny'); }
     };
+    // [v2 · 2026-11-17] 밀기 영역을 판 아래로 넓힘: 판(캔버스) + 그 아래 패널 중 '소환 단추 위쪽 절반'까지(사용자 요청).
+    //   소환 단추 위에서 시작해도 됨 — 움직임 없이 떼면 소환(탭), 누른 채 움직이면 밀기. 방향 단추 · 지휘관 · 수송차 · 멈춤 · AUTO · 덱 강화 단추는 제 동작 그대로
+    const TAP_PX = 10;
+    const NOT_SWIPE = '#world, #labPad, #cmdBtn, #truckBtn, #pauseBtn, #autoBtn, #deckRow, #modal, #infoBox, #offerCard';
+    U.labGestureBind = function () {
+      const stage = document.getElementById('stage'), roll = document.getElementById('rollBtn');
+      stage.addEventListener('pointerdown', e => {
+        const g = this.g; if (!g || g.over || g.paused || this.modalOpen() || g.pick || this.cmdArm) return;
+        const t = e.target; if (!t.closest || t.closest(NOT_SWIPE)) return;
+        const onRoll = !!t.closest('#rollBtn'), rr = roll.getBoundingClientRect();
+        if (!onRoll && !(t.closest('#panel') && e.clientY <= rr.top + rr.height / 2)) return;
+        this.sfx().init();
+        const [x, y] = this.pt(e);
+        this.swipe = { x, y, t: performance.now(), i: null, roll: onRoll, cx: e.clientX, cy: e.clientY };
+      }, true);
+      // 소환 단추에서 손을 뗄 때: 움직였으면 본편 굴리기(=소환) 처리로 넘기지 않고 밀기로만 끝냄
+      roll.addEventListener('pointerup', e => {
+        const s = this.swipe; if (!s || !s.roll || !(s.moved || s.done)) return;
+        e.stopImmediatePropagation(); roll.classList.remove('press'); this.up(e);
+      }, true);
+    };
     const baseBind = U.bind;
     U.bind = function () {
       baseBind.call(this);
+      this.labGestureBind();
       window.addEventListener('keydown', e => {
         if (!this.g || this.modalOpen()) return;
         const k = { ArrowUp: '-U', ArrowRight: '-V', ArrowDown: '+U', ArrowLeft: '+V', q: '-U', e: '-V', c: '+U', z: '+V' }[e.key];
